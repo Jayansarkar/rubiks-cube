@@ -54,7 +54,3 @@ def gen_confs(away=1, path='away', save=True):
         with open(p, 'wb') as f:
             pickle.dump(res, f)
     return res
-
-
-if __name__ == '__main__':
-    gen_confs(6)
