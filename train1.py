@@ -1,12 +1,13 @@
-import tensorflow as tf
-from tensorflow.keras.initializers import VarianceScaling
-from tensorflow.keras.layers import Input, Dense, Flatten, Lambda, Add, Subtract
-from tensorflow.keras.models import Sequential, Model
+import json
+import os
+import pickle
+from argparse import ArgumentParser
+from pathlib import Path
 
 import numpy as np
-import pickle, json
-import os
-from pathlib import Path
+import tensorflow as tf
+from tensorflow.keras.layers import Dense, Flatten
+from tensorflow.keras.models import Sequential
 from tqdm import tqdm
 
 from confs import str_to_state, state_to_str
@@ -87,38 +88,45 @@ class ReplayBuffer:
         for i, e in zip(indices, errors):
             self.priorities[i] = abs(e) + offset
 
-    def save(self, file='replay.pkl'):
-        temp = {
+    def save(self, save_dir='replay'):
+        os.makedirs(save_dir, exist_ok=True)
+        meta = {
             'count': self.count,
-            'index': self.index,
-            'states': [state_to_str(st) for st in self.states],
-            'actions': self.actions.tolist(),
-            'rewards': self.rewards.tolist(),
-            'terminals': self.terminals.tolist(),
-            'priorities': self.priorities.tolist()
+            'index': self.index
+            # 'states': [state_to_str(st) for st in self.states],
+            # 'actions': self.actions.tolist(),
+            # 'rewards': self.rewards.tolist(),
+            # 'terminals': self.terminals.tolist(),
+            # 'priorities': self.priorities.tolist()
         }
-        with open(file, 'w') as f:
-            json.dump(temp, f)
+        with open(f'{save_dir}/meta.json', 'w') as f:
+            json.dump(meta, f)
+        np.savez_compressed(f'{save_dir}/arrays',
+                            states=self.states,
+                            actions=self.actions,
+                            rewards=self.rewards,
+                            terminals=self.terminals,
+                            priorities=self.priorities)
 
     def load(self, file):
-        with open(file) as f:
-            temp = json.load(f)
-        self.count = temp['count']
-        self.index = temp['index']
+        with open(f'{file}/meta.json') as f:
+            meta = json.load(f)
+        self.count = meta['count']
+        self.index = meta['index']
 
-        for i in range(len(temp['states'])):
-            self.states[i] = str_to_state(temp['states'][i])
-        self.actions = np.array(temp['actions'], dtype=np.int32)
-        self.rewards = np.array(temp['rewards'], dtype=np.float32)
-        self.terminals = np.array(temp['terminals'], dtype=bool)
-        self.priorities = np.array(temp['priorities'], dtype=np.float32)
+        temp = np.load(f'{file}/arrays.npz')
+        self.states = temp['states']
+        self.actions = temp['actions']
+        self.rewards = temp['rewards']
+        self.terminals = temp['terminals']
+        self.priorities = temp['priorities']
 
 
 class Agent:
     save_folder = 'saved'
 
     def __init__(self, name='main',
-                 input_shape=(54,6),
+                 input_shape=(54, 6),
                  batch_size=32,
                  gamma=0.95,
                  num_actions=12,
@@ -137,12 +145,12 @@ class Agent:
         self.name = name
         self.dqn_path = os.path.join(self.save_folder, self.name, 'dqn.h5')
         self.target_dqn_path = os.path.join(self.save_folder, self.name, 'target_dqn.h5')
-        self.replay_path = os.path.join(self.save_folder, self.name, 'replay.pkl')
-        self.timestep_path = os.path.join(self.save_folder, 'timestep')
+        self.replay_path = os.path.join(self.save_folder, self.name, 'replay')
+        self.timestep_path = os.path.join(self.save_folder, self.name, 'timestep')
 
         self.dqn = build_q_network(num_actions=num_actions, input_shape=self.input_shape)
         self.target_dqn = build_q_network(num_actions=num_actions, input_shape=self.input_shape)
-        self.replay_buffer = ReplayBuffer(input_shape=self.input_shape,use_per=use_per)
+        self.replay_buffer = ReplayBuffer(input_shape=self.input_shape, use_per=use_per)
         self.use_per = use_per
 
         self.batch_size = batch_size
@@ -283,19 +291,31 @@ def conf_and_automation_reward(state, confs, last_conf=None):
 
 
 if __name__ == '__main__':
+    parser = ArgumentParser()
+    parser.add_argument('--no-one-hot-state', '-noh', action='store_true')
+    parser.add_argument('--use-priority', '-up', action='store_true')
+    parser.add_argument('--iters', '-i', default=10 ** 7, type=int, help='Number of iterations')
+    parser.add_argument('--max-shuffles', default=7, type=int, help='Maximum no of shuffles before each iterations')
+    parser.add_argument('--max-steps', default=20, type=int, help='Maximum no of steps in each episode')
+    args = parser.parse_args()
 
-    ONE_HOT_STATE = True
-    INPUT_SHAPE = (54, 6)
-    # ONE_HOT_STATE = False
-    # INPUT_SHAPE = (54, )
+    ONE_HOT_STATE = not args.no_one_hot_state
+    if ONE_HOT_STATE:
+        INPUT_SHAPE = (54, 6)
+    else:
+        INPUT_SHAPE = (54,)
+    USE_PRIORITY = args.use_priority
+    MAX_ITERS = args.iters
+    MAX_SHUFFLES = args.max_shuffles
+    MAX_STEPS = args.max_steps
 
     objs = ['more_that_6'] + [f'away_{i}' for i in range(1, 7)]
 
     # TensorBoard writer
     writer = tf.summary.create_file_writer(TENSORBOARD_DIR)
 
-    main_agent = Agent(input_shape=INPUT_SHAPE, use_per=False)
-    away_agents = [Agent(f'away_{i}', input_shape=INPUT_SHAPE, use_per=False) for i in range(1, 7)]
+    main_agent = Agent(input_shape=INPUT_SHAPE, use_per=USE_PRIORITY)
+    away_agents = [Agent(f'away_{i}', input_shape=INPUT_SHAPE, use_per=USE_PRIORITY) for i in range(1, 7)]
     agents = [main_agent] + away_agents
 
     main_agent.dqn.summary()
@@ -308,22 +328,22 @@ if __name__ == '__main__':
     except Exception as e:
         print(e)
 
-    env = CubeWrapper(max_step=5, one_hot_states=ONE_HOT_STATE)
-    env.setScramble(1, 2)
+    env = CubeWrapper(max_step=MAX_STEPS, one_hot_states=ONE_HOT_STATE)
+    env.setScramble(1, MAX_SHUFFLES)
 
     timestep = 0
     loss_list = []
     rewards = []
 
-    pbar = tqdm(total=10 ** 7)
+    pbar = tqdm(total=MAX_ITERS)
     try:
         with writer.as_default():
-            while timestep < 10 ** 7:
+            while timestep < MAX_ITERS:
                 save_timestep = 0
-                while save_timestep < 100000:
+                while save_timestep < 70000:
                     train_timestep = 0
                     while train_timestep < 30000:  # frames between eval and save
-                        
+
                         conf = conf_and_automation_reward(env.reset(), confs)
                         active_agent = agents[conf]
                         episode_reward_sum = 0
@@ -347,7 +367,7 @@ if __name__ == '__main__':
                             else:
                                 ar = 1
                             new_agent = agents[conf]
-                            
+
                             reward = reward + ar
                             active_agent.add_experience(current_state, action, reward, done)
 
@@ -360,7 +380,7 @@ if __name__ == '__main__':
 
                             episode_reward_sum += reward
                             active_agent = new_agent
-                            
+
                         rewards.append(episode_reward_sum)
 
                         if len(rewards) % 10 == 0 and rewards:
@@ -371,7 +391,6 @@ if __name__ == '__main__':
                                     tf.summary.scalar('Loss', np.mean(loss_list[-100:]), timestep)
                                 writer.flush()
 
-                    # eval_timestep = 0
                     # eval
                     done = False
                     eval_reward = 0
@@ -397,8 +416,8 @@ if __name__ == '__main__':
                         env.render()
                     print(f'Evaluation reward: {eval_reward}')
                     print(f'detected confs = {detected_objs}')
-                
-                save_timestep = 0
+
+                # saving model
                 for agent in agents:
                     agent.save()
 
