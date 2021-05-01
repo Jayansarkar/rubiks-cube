@@ -4,7 +4,7 @@ from tensorflow.keras.layers import Input, Dense, Flatten, Lambda, Add, Subtract
 from tensorflow.keras.models import Sequential, Model
 
 import numpy as np
-import pickle
+import pickle, json
 import os
 from pathlib import Path
 from tqdm import tqdm
@@ -32,7 +32,7 @@ def build_q_network(num_actions=12, input_shape=(54,), lr=0.0001):
 
 
 class ReplayBuffer:
-    def __init__(self, size=10 ** 6, input_shape=(54,), use_per=True):
+    def __init__(self, size=10 ** 6, input_shape=(54, 6), use_per=True):
         self.size = size
         self.state_shape = input_shape
         self.count = 0
@@ -88,13 +88,30 @@ class ReplayBuffer:
             self.priorities[i] = abs(e) + offset
 
     def save(self, file='replay.pkl'):
-        with open(file, 'wb') as f:
-            pickle.dump(self, f)
+        temp = {
+            'count': self.count,
+            'index': self.index,
+            'states': [state_to_str(st) for st in self.states],
+            'actions': self.actions.tolist(),
+            'rewards': self.rewards.tolist(),
+            'terminals': self.terminals.tolist(),
+            'priorities': self.priorities.tolist()
+        }
+        with open(file, 'w') as f:
+            json.dump(temp, f)
 
-    @staticmethod
-    def load(file):
-        with open(file, 'rb') as f:
-            return pickle.load(f)
+    def load(self, file):
+        with open(file) as f:
+            temp = json.load(f)
+        self.count = temp['count']
+        self.index = temp['index']
+
+        for i in range(len(temp['states'])):
+            self.states[i] = str_to_state(temp['states'][i])
+        self.actions = np.array(temp['actions'], dtype=np.int32)
+        self.rewards = np.array(temp['rewards'], dtype=np.float32)
+        self.terminals = np.array(temp['terminals'], dtype=bool)
+        self.priorities = np.array(temp['priorities'], dtype=np.float32)
 
 
 class Agent:
@@ -109,9 +126,9 @@ class Agent:
                  initial_epsilon=1,
                  midway_epsilon=0.1,
                  midway_timestep=10 ** 5,
-                 final_epsilon=0.01,
-                 max_timesteps=10 ** 7,
-                 use_per=False):
+                 final_epsilon=0.001,
+                 max_timesteps=10 ** 6,
+                 use_per=True):
         self.input_shape = input_shape
         self.num_actions = num_actions
         self.gamma = gamma
@@ -121,6 +138,7 @@ class Agent:
         self.dqn_path = os.path.join(self.save_folder, self.name, 'dqn.h5')
         self.target_dqn_path = os.path.join(self.save_folder, self.name, 'target_dqn.h5')
         self.replay_path = os.path.join(self.save_folder, self.name, 'replay.pkl')
+        self.timestep_path = os.path.join(self.save_folder, 'timestep')
 
         self.dqn = build_q_network(num_actions=num_actions, input_shape=self.input_shape)
         self.target_dqn = build_q_network(num_actions=num_actions, input_shape=self.input_shape)
@@ -203,9 +221,11 @@ class Agent:
         for p in [self.dqn_path, self.target_dqn_path, self.replay_path]:
             p = Path(p)
             p.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.timestep_path, 'w') as f:
+            f.write(f'{self.timestep}')
 
         self.dqn.save(self.dqn_path)
-        self.dqn.save(self.target_dqn_path)
+        self.target_dqn.save(self.target_dqn_path)
         self.replay_buffer.save(self.replay_path)
 
     def load(self, load_replay_buffer=True):
@@ -213,10 +233,11 @@ class Agent:
             raise ValueError(f'{self.save_folder} is not a valid directory')
         self.dqn = tf.keras.models.load_model(self.dqn_path)
         self.target_dqn = tf.keras.models.load_model(self.target_dqn_path)
+        with open(self.timestep_path) as f:
+            self.timestep = int(f.read())
 
         if load_replay_buffer:
-            rb = ReplayBuffer.load(self.replay_path)
-            self.replay_buffer = rb
+            self.replay_buffer.load(file=self.replay_path)
 
 
 def sep_faces(state):
@@ -273,19 +294,14 @@ if __name__ == '__main__':
     # TensorBoard writer
     writer = tf.summary.create_file_writer(TENSORBOARD_DIR)
 
-    main_agent = Agent(input_shape=INPUT_SHAPE)
-    away_agents = [Agent(f'away_{i}', input_shape=INPUT_SHAPE) for i in range(1, 7)]
+    main_agent = Agent(input_shape=INPUT_SHAPE, use_per=False)
+    away_agents = [Agent(f'away_{i}', input_shape=INPUT_SHAPE, use_per=False) for i in range(1, 7)]
     agents = [main_agent] + away_agents
 
     main_agent.dqn.summary()
 
     confs = load_confs()
 
-    # main_agent.load()
-    # daisy_agent.load()
-    # white_cross_agent.load()
-    # lower_level_agent.load()
-    # middle_level_agent.load()
     try:
         for agent in agents:
             agent.load()
@@ -303,96 +319,89 @@ if __name__ == '__main__':
     try:
         with writer.as_default():
             while timestep < 10 ** 7:
-                train_timestep = 0
-                while train_timestep < 10000:  # frames between eval and save
-                    # detected_objs = set()
-                    conf = conf_and_automation_reward(env.reset(), confs)
-                    active_agent = agents[conf]
-                    episode_reward_sum = 0
+                save_timestep = 0
+                while save_timestep < 100000:
+                    train_timestep = 0
+                    while train_timestep < 30000:  # frames between eval and save
+                        
+                        conf = conf_and_automation_reward(env.reset(), confs)
+                        active_agent = agents[conf]
+                        episode_reward_sum = 0
+                        done = False
+
+                        while not done:
+
+                            timestep += 1
+                            train_timestep += 1
+                            save_timestep += 1
+
+                            pbar.update(1)
+
+                            current_state = env.getstate()
+                            action = active_agent.get_action(current_state)
+                            new_state, reward, done, _ = env.step(action)
+
+                            if not done:
+                                conf, ar = conf_and_automation_reward(new_state, confs, last_conf=conf)
+
+                            else:
+                                ar = 1
+                            new_agent = agents[conf]
+                            
+                            reward = reward + ar
+                            active_agent.add_experience(current_state, action, reward, done)
+
+                            if active_agent.timestep > active_agent.replay_buffer_start_size:
+                                loss, _ = active_agent.learn()
+                                loss_list.append(loss)
+
+                                if active_agent.timestep % TARGET_UPDATE_FREQ == 0:
+                                    active_agent.update_target_network()
+
+                            episode_reward_sum += reward
+                            active_agent = new_agent
+                            
+                        rewards.append(episode_reward_sum)
+
+                        if len(rewards) % 10 == 0 and rewards:
+                            # Write to TensorBoard
+                            if WRITE_TENSORBOARD:
+                                tf.summary.scalar('Reward', np.mean(rewards[-10:]), timestep)
+                                if loss_list:
+                                    tf.summary.scalar('Loss', np.mean(loss_list[-100:]), timestep)
+                                writer.flush()
+
+                    # eval_timestep = 0
+                    # eval
                     done = False
-
+                    eval_reward = 0
+                    conf = conf_and_automation_reward(env.reset(), confs)
+                    env.render()
+                    detected_objs = [objs[conf]]
+                    active_agent = agents[conf]
                     while not done:
-
-                        timestep += 1
-                        train_timestep += 1
-
-                        pbar.update(1)
-
                         current_state = env.getstate()
-                        action = active_agent.get_action(current_state)
+                        action = active_agent.get_action(current_state, eval=True)
                         new_state, reward, done, _ = env.step(action)
 
                         if not done:
                             conf, ar = conf_and_automation_reward(new_state, confs, last_conf=conf)
-                            # if conf:
-                            #     detected_objs.add(objs[conf - 1])
-
+                            detected_objs.append(objs[conf])
                         else:
                             ar = 1
-                        new_agent = agents[conf]
 
-                        # ar = automation_reward(new_obj_set, old_obj_set)
-                        # if ar:
-                        #     print(f'New: {new_obj_set}, Old:{old_obj_set}')
-                        #     print(f'automation_reward;{ar}')
-                        #     end_st = np.argmax(env.getstate(), axis=1)
-                        #     env.set_state(start_st)
-                        #     env.render()
-                        #     env.set_state(end_st)
-                        #     env.render()
+                        active_agent = agents[conf]
+
                         reward = reward + ar
-                        active_agent.add_experience(current_state, action, reward, done)
-
-                        if active_agent.timestep > active_agent.replay_buffer_start_size:
-                            loss, _ = active_agent.learn()
-                            loss_list.append(loss)
-
-                            if active_agent.timestep % TARGET_UPDATE_FREQ == 0:
-                                active_agent.update_target_network()
-
-                        episode_reward_sum += reward
-                        active_agent = new_agent
-                        # detected_objs = new_obj_set
-                    rewards.append(episode_reward_sum)
-
-                    if len(rewards) % 10 == 0 and rewards:
-                        # Write to TensorBoard
-                        if WRITE_TENSORBOARD:
-                            tf.summary.scalar('Reward', np.mean(rewards[-10:]), timestep)
-                            if loss_list:
-                                tf.summary.scalar('Loss', np.mean(loss_list[-100:]), timestep)
-                            writer.flush()
-
-                # save_timestep = 0
+                        eval_reward += reward
+                        env.render()
+                    print(f'Evaluation reward: {eval_reward}')
+                    print(f'detected confs = {detected_objs}')
+                
+                save_timestep = 0
                 for agent in agents:
                     agent.save()
 
-                # eval_timestep = 0
-                # eval
-                done = False
-                eval_reward = 0
-                conf = conf_and_automation_reward(env.reset(), confs)
-                env.render()
-                detected_objs = [objs[conf]]
-                active_agent = agents[conf]
-                while not done:
-                    current_state = env.getstate()
-                    action = active_agent.get_action(current_state, eval=True)
-                    new_state, reward, done, _ = env.step(action)
-
-                    if not done:
-                        conf, ar = conf_and_automation_reward(new_state, confs, last_conf=conf)
-                        detected_objs.append(objs[conf])
-                    else:
-                        ar = 1
-
-                    active_agent = agents[conf]
-
-                    reward = reward + ar
-                    eval_reward += reward
-                    env.render()
-                print(f'Evaluation reward: {eval_reward}')
-                print(f'detected confs = {detected_objs}')
     except KeyboardInterrupt:
         print('\nTraining exited early.')
         writer.close()
