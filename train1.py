@@ -295,6 +295,7 @@ if __name__ == '__main__':
     parser.add_argument('--no-one-hot-state', '-noh', action='store_true')
     parser.add_argument('--use-priority', '-up', action='store_true')
     parser.add_argument('--iters', '-i', default=10 ** 7, type=int, help='Number of iterations')
+    parser.add_argument('--min-shuffles', default=1, type=int, help='Minimum no of shuffles before each iterations')
     parser.add_argument('--max-shuffles', default=7, type=int, help='Maximum no of shuffles before each iterations')
     parser.add_argument('--max-steps', default=20, type=int, help='Maximum no of steps in each episode')
     args = parser.parse_args()
