@@ -307,6 +307,7 @@ if __name__ == '__main__':
         INPUT_SHAPE = (54,)
     USE_PRIORITY = args.use_priority
     MAX_ITERS = args.iters
+    MIN_SHUFFLES = args.min_shuffles
     MAX_SHUFFLES = args.max_shuffles
     MAX_STEPS = args.max_steps
 
@@ -330,7 +331,7 @@ if __name__ == '__main__':
         print(e)
 
     env = CubeWrapper(max_step=MAX_STEPS, one_hot_states=ONE_HOT_STATE)
-    env.setScramble(1, MAX_SHUFFLES)
+    env.setScramble(MIN_SHUFFLES, MAX_SHUFFLES)
 
     timestep = 0
     loss_list = []
