@@ -271,21 +271,21 @@ def load_confs():
 def conf_and_automation_reward(state, confs, last_conf=None):
     state_str = state_to_str(state, one_hot=ONE_HOT_STATE)
     if last_conf is None:
-        for i, conf in confs.items():
-            if any([state_str in x for x in conf.values()]):
+        for i in confs:
+            if state_str in confs[i]:
                 return i
         return 0
     if last_conf == 0:
-        if any([state_str in x for x in confs[6].values()]):
+        if state_str in confs[6]:
             return 6, 1
         return 0, 0
     if last_conf == 6:
-        if any([state_str in x for x in confs[5].values()]):
+        if state_str in confs[5]:
             return 5, 1
         return 0, 0
-    if last_conf - 1 in confs and any([state_str in x for x in confs[last_conf - 1].values()]):
+    if last_conf - 1 in confs and state_str in confs[last_conf - 1]:
         return last_conf - 1, 1
-    if last_conf + 1 in confs and any([state_str in x for x in confs[last_conf + 1].values()]):
+    if last_conf + 1 in confs and state_str in confs[last_conf + 1]:
         return last_conf + 1, -1
     raise ValueError()
 
