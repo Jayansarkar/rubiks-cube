@@ -15,13 +15,13 @@ def is_inverse(action1, action2):
 
 
 def str_to_state(state_str):
-    return [int(x) for x in state_str]
+    return list(map(int, state_str.split()))
 
 
 def state_to_str(state, one_hot=False):
     if one_hot:
         state = np.argmax(state, axis=1)
-    return ''.join(map(str, state))
+    return ' '.join(map(str, state))
 
 
 def gen_confs(away=1, path='away', state_set=None, save=True):
