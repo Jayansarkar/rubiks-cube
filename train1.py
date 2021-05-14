@@ -168,7 +168,7 @@ class Agent:
 
     def get_epsilon(self, eval=False):
         if eval:
-            return self.initial_epsilon
+            return 0
         if 0 < self.timestep - self.replay_buffer_start_size < self.midway_timesteps:
             return self.initial_epsilon + self.slope1 * (self.timestep - self.replay_buffer_start_size)
         if self.timestep >= self.replay_buffer_start_size + self.midway_timesteps:
@@ -331,7 +331,7 @@ if __name__ == '__main__':
         print(e)
 
     env = CubeWrapper(max_step=MAX_STEPS, one_hot_states=ONE_HOT_STATE)
-    env.setScramble(MIN_SHUFFLES, MAX_SHUFFLES)
+    env.setScramble(MIN_SHUFFLES, MAX_SHUFFLES, True)
 
     timestep = 0
     loss_list = []
