@@ -1,5 +1,8 @@
 from cube import CubeWrapper
-from train1 import load_confs, conf_and_automation_reward, Agent, INPUT_SHAPE
+from train1 import load_confs, conf_and_automation_reward, Agent
+from tqdm import trange
+
+INPUT_SHAPE = (54, 6)
 
 if __name__ == '__main__':
     env = CubeWrapper(max_step=100)
@@ -10,11 +13,12 @@ if __name__ == '__main__':
     # load agents
     for agent in agents:
         agent.load()
-
+    print('Loading done')
     confs = load_confs()
     count = 0
-    reward_arr = [None] * 5000
-    for i in range(5000):
+    reward_arr = [None] * 500
+    t = trange(500)
+    for i in t:
         conf = conf_and_automation_reward(env.reset(), confs)
         active_agent = agents[conf]
         eval_reward = 0
@@ -36,3 +40,4 @@ if __name__ == '__main__':
         reward_arr[i] = eval_reward
         if env.ncube.isSolved():
             count += 1
+        t.set_description_str(f'count={count}/{i + 1}')

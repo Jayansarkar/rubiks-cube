@@ -16,6 +16,7 @@ from cube import CubeWrapper
 TARGET_UPDATE_FREQ = 1000
 TENSORBOARD_DIR = 'saved'
 WRITE_TENSORBOARD = True
+ONE_HOT_STATE = True
 
 
 def build_q_network(num_actions=12, input_shape=(54,), lr=0.0001):

@@ -88,7 +88,7 @@ class RubiksCubeEnv(gym.Env):
         while self.ncube.isSolved() :
             self.scramble_log = []
             for i in range (scramble_num):
-                action = random.randint(self.scramble_low, self.scramble_high)
+                action = random.randint(0, 11)
                 self.scramble_log.append(action)
                 self.ncube.minimalInterpreter(actionList[action])
 
